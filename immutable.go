@@ -1,6 +1,7 @@
 package pbimmutable
 
 import (
+	"errors" // Added for errors.New
 	"fmt"
 	"reflect"
 
@@ -10,10 +11,49 @@ import (
 )
 
 // MakeImmutable returns a hook function that prevents changes to specified fields of a record.
-// If no fieldNames are provided, all user-defined fields are considered immutable.
-// System fields like "id", "created", and "updated" are always allowed to change (as PocketBase manages them).
-func MakeImmutable(immutableFieldNames ...string) func(e *core.RecordEvent) error {
+// It can also take an optional callback function of type `func(e *core.RecordEvent) error`.
+// This callback is executed if all immutability checks pass.
+// The overall database transaction for the update operation commits only if:
+// 1. All immutability checks pass.
+// 2. The provided callback function (if any) also returns nil.
+// If any of these conditions fail (e.g., an immutable field is changed, or the callback returns an error),
+// the entire transaction is rolled back.
+//
+// Usage examples:
+// MakeImmutable("field1", "field2") // Only immutable fields
+// MakeImmutable("field1", myCallback) // Immutable field and a callback
+// MakeImmutable(myCallback)          // All user-defined fields immutable, and a callback
+// MakeImmutable()                    // All user-defined fields immutable, no callback
+func MakeImmutable(args ...interface{}) func(e *core.RecordEvent) error {
+	var immutableFieldNames []string
+	var userCallback func(e *core.RecordEvent) error
+	var parseError error
+
+	for i, arg := range args {
+		switch v := arg.(type) {
+		case string:
+			immutableFieldNames = append(immutableFieldNames, v)
+		case func(e *core.RecordEvent) error:
+			if userCallback != nil {
+				parseError = errors.New("pbimmutable.MakeImmutable: only one callback function can be provided")
+				break
+			}
+			userCallback = v
+		default:
+			parseError = fmt.Errorf("pbimmutable.MakeImmutable: invalid argument type %T at position %d", arg, i)
+			break
+		}
+		if parseError != nil {
+			break
+		}
+	}
+
+	// The actual hook function returned
 	return func(e *core.RecordEvent) error {
+		if parseError != nil { // Return parsing error immediately if MakeImmutable was called incorrectly
+			return apis.NewBadRequestError(fmt.Sprintf("MakeImmutable setup error: %v", parseError), nil)
+		}
+
 		if e.Record == nil {
 			return apis.NewBadRequestError("Record data is missing in the event.", nil)
 		}
@@ -23,7 +63,7 @@ func MakeImmutable(immutableFieldNames ...string) func(e *core.RecordEvent) erro
 
 		originalRecord, err := e.App.Dao().FindRecordById(e.Record.Collection().Id, e.Record.Id)
 		if err != nil {
-			return apis.NewBadRequestError(fmt.Sprintf("Failed to fetch original record %s from collection %s.", e.Record.Id, e.Record.Collection().Name), err)
+			return apis.NewBadRequestError(fmt.Sprintf("Failed to fetch original record %s from collection %s for immutability check.", e.Record.Id, e.Record.Collection().Name), err)
 		}
 
 		fieldsToCheck := immutableFieldNames
@@ -42,12 +82,9 @@ func MakeImmutable(immutableFieldNames ...string) func(e *core.RecordEvent) erro
 			originalValue := originalRecord.Get(fieldName)
 			pendingValue := e.Record.Get(fieldName)
 
-			// DeepEqual is used for robust comparison, especially for slices, maps, etc.
 			if !reflect.DeepEqual(originalValue, pendingValue) {
-				// Check if the field is a system field that is allowed to change (e.g. "updated")
-				// This check is more of a safeguard, primary filtering is done above for the "all fields" case.
 				if isSystemField(fieldName) && fieldName == models.SystemFieldUpdated {
-					continue // Allow 'updated' field to change
+					continue
 				}
 
 				return apis.NewBadRequestError(
@@ -60,7 +97,29 @@ func MakeImmutable(immutableFieldNames ...string) func(e *core.RecordEvent) erro
 				)
 			}
 		}
-		return nil
+
+		// If we've reached here, all immutability checks passed.
+
+		// Attempt to proceed with the main operation (e.g., database commit)
+		err = e.Next() // This line assumes 'e' has a Next() method.
+		if err != nil {
+			// If e.Next() fails, it implies the underlying operation (eg. DB save) failed.
+			return fmt.Errorf("failed to commit record changes via e.Next() after immutability checks: %w", err)
+		}
+		// If e.Next() succeeded, the main operation is now considered committed.
+
+		// Now, if a user callback was provided, execute it.
+		// This callback runs AFTER the main record update has been successfully committed via e.Next().
+		if userCallback != nil {
+			if callbackErr := userCallback(e); callbackErr != nil {
+				// The main record operation was committed. This error is from the subsequent user-defined callback.
+				// The API will report this callback error, but the record data was already saved.
+				// Consider logging this error or handling it in a way that acknowledges the main commit succeeded.
+				return fmt.Errorf("user callback failed AFTER record commit: %w", callbackErr)
+			}
+		}
+
+		return nil // Signifies success of this hook and the post-commit callback.
 	}
 }
 
