@@ -1,6 +1,6 @@
 # PocketBase Immutable Fields Plugin
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/USERNAME/pbimmutable.svg)](https://pkg.go.dev/github.com/USERNAME/pbimmutable)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Harry-Zhang121/pbimmutable.svg)](https://pkg.go.dev/github.com/Harry-Zhang121/pbimmutable)
 
 This library provides a simple way to make specific record fields immutable in your [PocketBase](https://pocketbase.io/) application. Once a record is created, configured fields cannot be changed on update operations.
 
@@ -9,8 +9,7 @@ This library provides a simple way to make specific record fields immutable in y
 To use this library in your PocketBase project, you can `go get` it:
 
 ```bash
-# Replace USERNAME with the actual GitHub username or path
-go get github.com/USERNAME/pbimmutable
+go get github.com/Harry-Zhang121/pbimmutable
 ```
 
 ## How to Use
@@ -21,7 +20,7 @@ Import the library into your PocketBase `main.go` file (or wherever you configur
 import (
 	"log"
 
-	"github.com/USERNAME/pbimmutable" // Import the library
+	"github.com/Harry-Zhang121/pbimmutable" // Import the library
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	// ... other imports
@@ -109,7 +108,7 @@ package main
 import (
 	"log"
 
-	"github.com/USERNAME/pbimmutable"
+	"github.com/Harry-Zhang121/pbimmutable"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 
